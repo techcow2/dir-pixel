@@ -2,6 +2,8 @@
 
 DirPixel is a desktop application that allows you to replace existing images with AI-generated ones based on customizable prompts. Using the power of Pollinations.ai, this tool can generate new images based on text descriptions and save them with the same filenames as your original images.
 
+Generating AI images with Pollinations.ai is completely free and does not require an API key.
+
 ## Features
 
 - Select a folder containing images to be replaced
