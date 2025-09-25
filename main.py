@@ -1,13 +1,15 @@
 import sys
 import os
 import requests
+import io
+from PIL import Image
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
-    QPushButton, QLabel, QLineEdit, QTextEdit, QTableWidget,
+    QPushButton, QLabel, QLineEdit, QTextEdit, QTableWidget, QAbstractItemView,
     QTableWidgetItem, QFileDialog, QProgressBar, QMessageBox, QHeaderView, QSizePolicy
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QPixmap
 
 class ImageGeneratorThread(QThread):
     progress_updated = pyqtSignal(int)
@@ -46,15 +48,23 @@ class ImageGeneratorThread(QThread):
                     self.status_updated.emit(f"Skipping {filename}: No prompt provided.")
                     continue
 
-                url = f"https://pollinations.ai/p/{prompt}"
+                url = f"https://pollinations.ai/p/{prompt}?nologo=true"
                 response = requests.get(url, timeout=30)
                 if response.status_code == 200:
-                    # Ensure output files are saved as PNG since that's what Pollinations generates
                     name_without_ext = os.path.splitext(filename)[0]
-                    output_path = os.path.join(self.output_folder, f"{name_without_ext}.png")
-                    with open(output_path, 'wb') as f:
-                        f.write(response.content)
-                    self.status_updated.emit(f"Generated {name_without_ext}.png")
+                    original_ext = os.path.splitext(filename)[1].lower()
+                    if original_ext in ['.jpg', '.jpeg']:
+                        # Convert PNG to JPG
+                        image = Image.open(io.BytesIO(response.content))
+                        output_path = os.path.join(self.output_folder, f"{name_without_ext}.jpg")
+                        image.convert('RGB').save(output_path, 'JPEG', quality=95)
+                        self.status_updated.emit(f"Generated {name_without_ext}.jpg")
+                    else:
+                        # Save as PNG
+                        output_path = os.path.join(self.output_folder, f"{name_without_ext}.png")
+                        with open(output_path, 'wb') as f:
+                            f.write(response.content)
+                        self.status_updated.emit(f"Generated {name_without_ext}.png")
                 else:
                     self.status_updated.emit(f"Failed to generate {filename}: HTTP {response.status_code}")
             except Exception as e:
@@ -71,8 +81,8 @@ class ImageReplacerApp(QMainWindow):
         self.setGeometry(100, 100, 900, 700)
         self.setMinimumSize(800, 600)
         self.source_folder = ""
-        # Only support PNG files since that's what Pollinations generates
-        self.image_extensions = ['.png']
+        # Support PNG and JPG files, convert generated PNG to matching format
+        self.image_extensions = ['.png', '.jpg', '.jpeg']
         self.init_ui()
         self.apply_styles()
 
@@ -118,15 +128,17 @@ class ImageReplacerApp(QMainWindow):
         prompt_layout.addWidget(table_label)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Filename", "Custom Prompt"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Preview", "Filename", "Custom Prompt"])
+        self.table.setColumnWidth(0, 60)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectItems)
         self.table.verticalHeader().setVisible(False)
-        self.table.setMinimumHeight(200)
+        self.table.setMinimumHeight(300)
+        self.table.itemClicked.connect(self.on_item_clicked)
         prompt_layout.addWidget(self.table)
         main_layout.addWidget(prompt_group)
 
@@ -201,6 +213,8 @@ class ImageReplacerApp(QMainWindow):
                 border: 1px solid #ced4da;
                 border-radius: 4px;
                 font-size: 14px;
+                background-color: white;
+                color: black;
             }
             QLineEdit:focus {
                 border-color: #80bdff;
@@ -246,7 +260,24 @@ class ImageReplacerApp(QMainWindow):
                 border-radius: 3px;
             }
             QMessageBox {
+                background-color: white;
+                color: black;
                 font-size: 14px;
+            }
+            QMessageBox QPushButton {
+                background-color: #007bff;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-size: 13px;
+                min-width: 80px;
+            }
+            QMessageBox QPushButton:hover {
+                background-color: #0056b3;
+            }
+            QMessageBox QPushButton:pressed {
+                background-color: #004085;
             }
         """)
 
@@ -267,9 +298,24 @@ class ImageReplacerApp(QMainWindow):
 
         self.table.setRowCount(len(files))
         for i, filename in enumerate(files):
-            self.table.setItem(i, 0, QTableWidgetItem(filename))
-            self.table.setItem(i, 1, QTableWidgetItem(""))
-            self.table.setRowHeight(i, 30)
+            # Preview
+            preview_label = QLabel()
+            preview_label.setFixedSize(50, 50)
+            preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            full_path = os.path.join(self.source_folder, filename)
+            if os.path.exists(full_path):
+                pixmap = QPixmap(full_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                preview_label.setPixmap(pixmap)
+            self.table.setCellWidget(i, 0, preview_label)
+
+            # Filename
+            self.table.setItem(i, 1, QTableWidgetItem(filename))
+            item1 = self.table.item(i, 1)
+            item1.setFlags(item1.flags() & ~Qt.ItemFlag.ItemIsEditable)
+
+            # Custom Prompt
+            self.table.setItem(i, 2, QTableWidgetItem(""))
+            self.table.setRowHeight(i, 50)
 
         self.status_label.setText(f"Loaded {len(files)} image files. Provide prompts and click Generate.")
 
@@ -284,8 +330,8 @@ class ImageReplacerApp(QMainWindow):
         # Collect prompts
         prompts = {'global': self.global_prompt_edit.text().strip()}
         for row in range(self.table.rowCount()):
-            filename_item = self.table.item(row, 0)
-            prompt_item = self.table.item(row, 1)
+            filename_item = self.table.item(row, 1)
+            prompt_item = self.table.item(row, 2)
             if filename_item and prompt_item:
                 custom_prompt = prompt_item.text().strip()
                 if custom_prompt:
@@ -306,11 +352,17 @@ class ImageReplacerApp(QMainWindow):
         self.thread.error_occurred.connect(self.handle_error)
         self.thread.start()
 
+    def on_item_clicked(self, item):
+        if item and item.column() == 2:
+            self.table.editItem(item)
+
     def generation_finished(self):
         self.generate_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
         self.status_label.setText("Generation completed!")
-        QMessageBox.information(self, "Success", f"Images generated in {os.path.join(self.source_folder, 'generated_images')}")
+        output_folder = os.path.join(self.source_folder, "generated_images")
+        QMessageBox.information(self, "Success", f"Images generated in {output_folder}")
+        os.startfile(output_folder)
 
     def handle_error(self, error_msg):
         self.status_label.setText("Error occurred")
