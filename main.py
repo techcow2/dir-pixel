@@ -19,7 +19,7 @@ class ImageGeneratorThread(QThread):
     error_occurred = pyqtSignal(str)
     cancelled = pyqtSignal()
 
-    def __init__(self, source_folder, output_folder, prompts, image_extensions, selected_files=None):
+    def __init__(self, source_folder, output_folder, prompts, image_extensions, selected_files=None, width=512, height=512):
         super().__init__()
         self.source_folder = source_folder
         self.output_folder = output_folder
@@ -27,6 +27,8 @@ class ImageGeneratorThread(QThread):
         self.image_extensions = image_extensions
         self.selected_files = selected_files
         self.files = self.selected_files if self.selected_files is not None else self.get_image_files()
+        self.width = width
+        self.height = height
         self._cancelled = False
 
     def cancel(self):
@@ -61,7 +63,7 @@ class ImageGeneratorThread(QThread):
                     self.status_updated.emit(f"Skipping {filename}: No prompt provided.")
                     continue
 
-                url = f"https://pollinations.ai/p/{prompt}?nologo=true"
+                url = f"https://pollinations.ai/p/{prompt}?nologo=true&width={self.width}&height={self.height}"
                 response = requests.get(url, timeout=30)
                 if response.status_code == 200:
                     name_without_ext = os.path.splitext(filename)[0]
@@ -157,6 +159,31 @@ class ImageReplacerApp(QMainWindow):
         prompt_layout.addWidget(global_prompt_label)
         prompt_layout.addWidget(self.global_prompt_edit)
         self.global_prompt_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        # Image size inputs
+        size_label = QLabel("Image Size (width x height, default 512x512):")
+        size_layout = QHBoxLayout()
+        size_layout.setSpacing(5)
+        size_layout.setContentsMargins(0, 0, 0, 0)
+        self.width_edit = QLineEdit("512")
+        self.width_edit.setPlaceholderText("Width (e.g., 1024)")
+        self.width_edit.setMaximumWidth(100)
+        self.width_edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.height_edit = QLineEdit("512")
+        self.height_edit.setPlaceholderText("Height (e.g., 1024)")
+        self.height_edit.setMaximumWidth(100)
+        self.height_edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        x_label = QLabel("x")
+        x_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        x_label.setMaximumWidth(20)
+        size_layout.addWidget(self.width_edit)
+        size_layout.addWidget(x_label)
+        size_layout.addWidget(self.height_edit)
+
+        size_container = QWidget()
+        size_container.setLayout(size_layout)
+        prompt_layout.addWidget(size_label)
+        prompt_layout.addWidget(size_container, alignment=Qt.AlignmentFlag.AlignLeft)
 
         # Per-file prompts table
         table_label = QLabel("Custom Prompts per File:")
@@ -412,7 +439,7 @@ class ImageReplacerApp(QMainWindow):
 
             # Custom Prompt
             self.table.setItem(i, 3, QTableWidgetItem(""))
-            self.table.setRowHeight(i, 50)
+            self.table.setRowHeight(i, 60)
 
         num_selected = len(files)  # All selected by default
         self.status_label.setText(f"Loaded {len(files)} image files ({num_selected} selected). Provide prompts and click Generate.")
@@ -453,13 +480,27 @@ class ImageReplacerApp(QMainWindow):
             QMessageBox.warning(self, "Error", "Please provide at least a global prompt or custom prompts for selected files.")
             return
 
+        # Get width and height from user input
+        width_str = self.width_edit.text().strip()
+        height_str = self.height_edit.text().strip()
+        try:
+            width = int(width_str) if width_str else 512
+            height = int(height_str) if height_str else 512
+            if width <= 0 or height <= 0:
+                raise ValueError("Sizes must be positive")
+        except ValueError:
+            width = 512
+            height = 512
+            QMessageBox.warning(self, "Invalid Size", "Invalid width or height. Using default 512x512.")
+
         self.generate_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.cancel_btn.setVisible(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
+        self.status_label.setText("Starting generation...")
 
-        self.thread = ImageGeneratorThread(self.source_folder, output_folder, prompts, self.image_extensions, selected_files)
+        self.thread = ImageGeneratorThread(self.source_folder, output_folder, prompts, self.image_extensions, selected_files, width=width, height=height)
         self.thread.progress_updated.connect(self.progress_bar.setValue)
         self.thread.status_updated.connect(self.status_label.setText)
         self.thread.finished_all.connect(self.generation_finished)
