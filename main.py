@@ -16,6 +16,7 @@ class ImageGeneratorThread(QThread):
     status_updated = pyqtSignal(str)
     finished_all = pyqtSignal()
     error_occurred = pyqtSignal(str)
+    cancelled = pyqtSignal()
 
     def __init__(self, source_folder, output_folder, prompts, image_extensions):
         super().__init__()
@@ -24,6 +25,11 @@ class ImageGeneratorThread(QThread):
         self.prompts = prompts  # dict: filename -> prompt
         self.image_extensions = image_extensions
         self.files = self.get_image_files()
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+        self.cancelled.emit()
 
     def get_image_files(self):
         files = []
@@ -40,6 +46,11 @@ class ImageGeneratorThread(QThread):
             return
 
         for i, filename in enumerate(self.files):
+            if self._cancelled:
+                self.status_updated.emit("Generation cancelled.")
+                self.cancelled.emit()
+                return
+
             try:
                 prompt = self.prompts.get(filename, self.prompts.get('global', ''))
                 if filename not in self.prompts and prompt:
@@ -72,19 +83,30 @@ class ImageGeneratorThread(QThread):
 
             self.progress_updated.emit(int((i + 1) / total * 100))
 
-        self.finished_all.emit()
+        if not self._cancelled:
+            self.finished_all.emit()
+        else:
+            self.status_updated.emit("Generation cancelled.")
+            self.cancelled.emit()
 
 class ImageReplacerApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AI Image Replacer")
-        self.setGeometry(100, 100, 900, 700)
+        self.setWindowTitle("DirPixel")
+        self.resize(900, 900)
         self.setMinimumSize(800, 600)
+        self.center()
         self.source_folder = ""
         # Support PNG and JPG files, convert generated PNG to matching format
         self.image_extensions = ['.png', '.jpg', '.jpeg']
         self.init_ui()
         self.apply_styles()
+
+    def center(self):
+        qr = self.frameGeometry()
+        cp = QApplication.primaryScreen().availableGeometry().center()
+        qr.moveCenter(cp)
+        self.move(qr.topLeft())
 
     def init_ui(self):
         central_widget = QWidget()
@@ -92,6 +114,18 @@ class ImageReplacerApp(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(20)
+
+        # App title header
+        title_label = QLabel("DirPixel")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet("""
+            color: #007bff;
+            margin-bottom: 30px;
+            font-family: 'Segoe UI';
+            font-size: 28pt;
+            font-weight: bold;
+        """)
+        main_layout.addWidget(title_label)
 
         # Folder Selection Group
         folder_group = QGroupBox("Folder Selection")
@@ -130,7 +164,7 @@ class ImageReplacerApp(QMainWindow):
         self.table = QTableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Preview", "Filename", "Custom Prompt"])
-        self.table.setColumnWidth(0, 60)
+        self.table.setColumnWidth(0, 80)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -151,7 +185,17 @@ class ImageReplacerApp(QMainWindow):
         self.generate_btn.clicked.connect(self.start_generation)
         self.generate_btn.setEnabled(False)
         self.generate_btn.setMinimumHeight(40)
+        self.generate_btn.setMaximumWidth(200)
         controls_layout.addWidget(self.generate_btn)
+
+        self.cancel_btn = QPushButton("Cancel Generation")
+        self.cancel_btn.clicked.connect(self.cancel_generation)
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setVisible(False)
+        self.cancel_btn.setMinimumHeight(40)
+        self.cancel_btn.setMaximumWidth(200)
+        self.cancel_btn.setStyleSheet("background-color: #dc3545; color: white;")
+        controls_layout.addWidget(self.cancel_btn)
 
         # Progress bar
         self.progress_bar = QProgressBar()
@@ -167,6 +211,35 @@ class ImageReplacerApp(QMainWindow):
         main_layout.addWidget(controls_group)
 
         main_layout.addStretch()
+
+        # Footer with developer info and close button
+        footer_layout = QHBoxLayout()
+        footer_label = QLabel("© 2025 Island Applications")
+        footer_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        footer_label.setStyleSheet("color: #6c757d; font-size: 12px; padding: 10px;")
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc3545;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-size: 13px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #c82333;
+            }
+            QPushButton:pressed {
+                background-color: #a71e2a;
+            }
+        """)
+        footer_layout.addWidget(footer_label)
+        footer_layout.addStretch()
+        footer_layout.addWidget(close_btn)
+        main_layout.addLayout(footer_layout)
 
     def apply_styles(self):
         self.setStyleSheet("""
@@ -342,6 +415,8 @@ class ImageReplacerApp(QMainWindow):
             return
 
         self.generate_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(True)
+        self.cancel_btn.setVisible(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
 
@@ -350,6 +425,7 @@ class ImageReplacerApp(QMainWindow):
         self.thread.status_updated.connect(self.status_label.setText)
         self.thread.finished_all.connect(self.generation_finished)
         self.thread.error_occurred.connect(self.handle_error)
+        self.thread.cancelled.connect(self.generation_cancelled)
         self.thread.start()
 
     def on_item_clicked(self, item):
@@ -358,15 +434,50 @@ class ImageReplacerApp(QMainWindow):
 
     def generation_finished(self):
         self.generate_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setVisible(False)
         self.progress_bar.setVisible(False)
         self.status_label.setText("Generation completed!")
         output_folder = os.path.join(self.source_folder, "generated_images")
         QMessageBox.information(self, "Success", f"Images generated in {output_folder}")
         os.startfile(output_folder)
+        if hasattr(self, 'thread'):
+            del self.thread
+
+    def generation_cancelled(self):
+        self.generate_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setVisible(False)
+        self.progress_bar.setVisible(False)
+        self.status_label.setText("Generation cancelled.")
+        if hasattr(self, 'thread'):
+            del self.thread
+
+    def cancel_generation(self):
+        if hasattr(self, 'thread') and self.thread.isRunning():
+            self.thread.cancel()
+            self.status_label.setText("Cancelling generation...")
 
     def handle_error(self, error_msg):
+        self.generate_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setVisible(False)
+        self.progress_bar.setVisible(False)
         self.status_label.setText("Error occurred")
         QMessageBox.critical(self, "Error", error_msg)
+        if hasattr(self, 'thread'):
+            del self.thread
+
+    def closeEvent(self, event):
+        if hasattr(self, 'thread') and isinstance(self.thread, QThread) and self.thread.isRunning():
+            self.thread.cancel()
+            self.thread.wait(3000)  # Wait up to 3 seconds
+            if self.thread.isRunning():
+                self.thread.terminate()
+                self.thread.wait()
+            if hasattr(self, 'thread'):
+                del self.thread
+        event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
