@@ -49,10 +49,12 @@ class ImageGeneratorThread(QThread):
                 url = f"https://pollinations.ai/p/{prompt}"
                 response = requests.get(url, timeout=30)
                 if response.status_code == 200:
-                    output_path = os.path.join(self.output_folder, filename)
+                    # Ensure output files are saved as PNG since that's what Pollinations generates
+                    name_without_ext = os.path.splitext(filename)[0]
+                    output_path = os.path.join(self.output_folder, f"{name_without_ext}.png")
                     with open(output_path, 'wb') as f:
                         f.write(response.content)
-                    self.status_updated.emit(f"Generated {filename}")
+                    self.status_updated.emit(f"Generated {name_without_ext}.png")
                 else:
                     self.status_updated.emit(f"Failed to generate {filename}: HTTP {response.status_code}")
             except Exception as e:
@@ -69,7 +71,8 @@ class ImageReplacerApp(QMainWindow):
         self.setGeometry(100, 100, 900, 700)
         self.setMinimumSize(800, 600)
         self.source_folder = ""
-        self.image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp']
+        # Only support PNG files since that's what Pollinations generates
+        self.image_extensions = ['.png']
         self.init_ui()
         self.apply_styles()
 
