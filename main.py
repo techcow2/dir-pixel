@@ -19,7 +19,7 @@ class ImageGeneratorThread(QThread):
     error_occurred = pyqtSignal(str)
     cancelled = pyqtSignal()
 
-    def __init__(self, source_folder, output_folder, prompts, image_extensions, selected_files=None, width=512, height=512):
+    def __init__(self, source_folder, output_folder, prompts, image_extensions, selected_files=None, width=1024, height=1024):
         super().__init__()
         self.source_folder = source_folder
         self.output_folder = output_folder
@@ -161,15 +161,15 @@ class ImageReplacerApp(QMainWindow):
         self.global_prompt_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         # Image size inputs
-        size_label = QLabel("Image Size (width x height, default 512x512):")
+        size_label = QLabel("Image Size (width x height, default 1024x1024):")
         size_layout = QHBoxLayout()
         size_layout.setSpacing(5)
         size_layout.setContentsMargins(0, 0, 0, 0)
-        self.width_edit = QLineEdit("512")
+        self.width_edit = QLineEdit("1024")
         self.width_edit.setPlaceholderText("Width (e.g., 1024)")
         self.width_edit.setMaximumWidth(100)
         self.width_edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.height_edit = QLineEdit("512")
+        self.height_edit = QLineEdit("1024")
         self.height_edit.setPlaceholderText("Height (e.g., 1024)")
         self.height_edit.setMaximumWidth(100)
         self.height_edit.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -484,14 +484,14 @@ class ImageReplacerApp(QMainWindow):
         width_str = self.width_edit.text().strip()
         height_str = self.height_edit.text().strip()
         try:
-            width = int(width_str) if width_str else 512
-            height = int(height_str) if height_str else 512
+            width = int(width_str) if width_str else 1024
+            height = int(height_str) if height_str else 1024
             if width <= 0 or height <= 0:
                 raise ValueError("Sizes must be positive")
         except ValueError:
-            width = 512
-            height = 512
-            QMessageBox.warning(self, "Invalid Size", "Invalid width or height. Using default 512x512.")
+            width = 1024
+            height = 1024
+            QMessageBox.warning(self, "Invalid Size", "Invalid width or height. Using default 1024x1024.")
 
         self.generate_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
