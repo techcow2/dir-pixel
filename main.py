@@ -6,7 +6,8 @@ from PIL import Image
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
     QPushButton, QLabel, QLineEdit, QTextEdit, QTableWidget, QAbstractItemView,
-    QTableWidgetItem, QFileDialog, QProgressBar, QMessageBox, QHeaderView, QSizePolicy
+    QTableWidgetItem, QFileDialog, QProgressBar, QMessageBox, QHeaderView, QSizePolicy,
+    QCheckBox
 )
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QPixmap
@@ -18,13 +19,14 @@ class ImageGeneratorThread(QThread):
     error_occurred = pyqtSignal(str)
     cancelled = pyqtSignal()
 
-    def __init__(self, source_folder, output_folder, prompts, image_extensions):
+    def __init__(self, source_folder, output_folder, prompts, image_extensions, selected_files=None):
         super().__init__()
         self.source_folder = source_folder
         self.output_folder = output_folder
         self.prompts = prompts  # dict: filename -> prompt
         self.image_extensions = image_extensions
-        self.files = self.get_image_files()
+        self.selected_files = selected_files
+        self.files = self.selected_files if self.selected_files is not None else self.get_image_files()
         self._cancelled = False
 
     def cancel(self):
@@ -41,7 +43,7 @@ class ImageGeneratorThread(QThread):
     def run(self):
         total = len(self.files)
         if total == 0:
-            self.status_updated.emit("No image files found.")
+            self.status_updated.emit("No selected image files.")
             self.finished_all.emit()
             return
 
@@ -162,11 +164,12 @@ class ImageReplacerApp(QMainWindow):
         prompt_layout.addWidget(table_label)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Preview", "Filename", "Custom Prompt"])
-        self.table.setColumnWidth(0, 80)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Select", "Preview", "Filename", "Custom Prompt"])
+        self.table.setColumnWidth(0, 50)
+        self.table.setColumnWidth(1, 80)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectItems)
@@ -300,7 +303,7 @@ class ImageReplacerApp(QMainWindow):
                 gridline-color: #dee2e6;
                 background-color: white;
                 alternate-background-color: #f8f9fa;
-                selection-background-color: #007bff;
+                selection-background-color: transparent;
                 border: 1px solid #dee2e6;
                 border-radius: 4px;
             }
@@ -310,7 +313,7 @@ class ImageReplacerApp(QMainWindow):
                 color: #212529;
             }
             QTableWidget::item:selected {
-                color: white;
+                color: #212529;
             }
             QHeaderView::section {
                 background-color: #e9ecef;
@@ -352,6 +355,22 @@ class ImageReplacerApp(QMainWindow):
             QMessageBox QPushButton:pressed {
                 background-color: #004085;
             }
+            QCheckBox {
+                spacing: 5px;
+                color: #007bff;
+            }
+            QCheckBox::indicator:unchecked {
+                background-color: white;
+                border: 2px solid #adb5bd;
+            }
+            QCheckBox::indicator:unchecked:hover {
+                background-color: white;
+                border: 2px solid #007bff;
+            }
+            QCheckBox::indicator:unchecked:pressed {
+                background-color: white;
+                border: 2px solid #0056b3;
+            }
         """)
 
     def select_folder(self):
@@ -371,6 +390,11 @@ class ImageReplacerApp(QMainWindow):
 
         self.table.setRowCount(len(files))
         for i, filename in enumerate(files):
+            # Select checkbox
+            checkbox = QCheckBox()
+            checkbox.setChecked(True)
+            self.table.setCellWidget(i, 0, checkbox)
+
             # Preview
             preview_label = QLabel()
             preview_label.setFixedSize(50, 50)
@@ -379,39 +403,54 @@ class ImageReplacerApp(QMainWindow):
             if os.path.exists(full_path):
                 pixmap = QPixmap(full_path).scaled(50, 50, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 preview_label.setPixmap(pixmap)
-            self.table.setCellWidget(i, 0, preview_label)
+            self.table.setCellWidget(i, 1, preview_label)
 
             # Filename
-            self.table.setItem(i, 1, QTableWidgetItem(filename))
-            item1 = self.table.item(i, 1)
-            item1.setFlags(item1.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(i, 2, QTableWidgetItem(filename))
+            item_filename = self.table.item(i, 2)
+            item_filename.setFlags(item_filename.flags() & ~Qt.ItemFlag.ItemIsEditable)
 
             # Custom Prompt
-            self.table.setItem(i, 2, QTableWidgetItem(""))
+            self.table.setItem(i, 3, QTableWidgetItem(""))
             self.table.setRowHeight(i, 50)
 
-        self.status_label.setText(f"Loaded {len(files)} image files. Provide prompts and click Generate.")
+        num_selected = len(files)  # All selected by default
+        self.status_label.setText(f"Loaded {len(files)} image files ({num_selected} selected). Provide prompts and click Generate.")
 
     def start_generation(self):
         if not self.source_folder:
             QMessageBox.warning(self, "Error", "Please select a folder first.")
             return
 
+        # Collect selected files
+        selected_files = []
+        for row in range(self.table.rowCount()):
+            checkbox = self.table.cellWidget(row, 0)
+            if checkbox and checkbox.isChecked():
+                filename_item = self.table.item(row, 2)
+                if filename_item:
+                    selected_files.append(filename_item.text())
+
+        if not selected_files:
+            QMessageBox.warning(self, "Error", "Please select at least one image file.")
+            return
+
         output_folder = os.path.join(self.source_folder, "generated_images")
         os.makedirs(output_folder, exist_ok=True)
 
-        # Collect prompts
+        # Collect prompts (for all files, but only generate for selected)
         prompts = {'global': self.global_prompt_edit.text().strip()}
         for row in range(self.table.rowCount()):
-            filename_item = self.table.item(row, 1)
-            prompt_item = self.table.item(row, 2)
+            filename_item = self.table.item(row, 2)
+            prompt_item = self.table.item(row, 3)
             if filename_item and prompt_item:
                 custom_prompt = prompt_item.text().strip()
                 if custom_prompt:
                     prompts[filename_item.text()] = custom_prompt
 
-        if not prompts['global'] and all(not prompt for prompt in prompts.values() if prompt != 'global'):
-            QMessageBox.warning(self, "Error", "Please provide at least a global prompt or custom prompts.")
+        has_prompts = prompts['global'] or any(prompt for prompt in prompts.values() if prompt != 'global')
+        if not has_prompts:
+            QMessageBox.warning(self, "Error", "Please provide at least a global prompt or custom prompts for selected files.")
             return
 
         self.generate_btn.setEnabled(False)
@@ -420,7 +459,7 @@ class ImageReplacerApp(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
 
-        self.thread = ImageGeneratorThread(self.source_folder, output_folder, prompts, self.image_extensions)
+        self.thread = ImageGeneratorThread(self.source_folder, output_folder, prompts, self.image_extensions, selected_files)
         self.thread.progress_updated.connect(self.progress_bar.setValue)
         self.thread.status_updated.connect(self.status_label.setText)
         self.thread.finished_all.connect(self.generation_finished)
@@ -429,7 +468,7 @@ class ImageReplacerApp(QMainWindow):
         self.thread.start()
 
     def on_item_clicked(self, item):
-        if item and item.column() == 2:
+        if item and item.column() == 3:
             self.table.editItem(item)
 
     def generation_finished(self):
@@ -469,7 +508,7 @@ class ImageReplacerApp(QMainWindow):
             del self.thread
 
     def closeEvent(self, event):
-        if hasattr(self, 'thread') and isinstance(self.thread, QThread) and self.thread.isRunning():
+        if hasattr(self, 'thread') and isinstance(self, QThread) and self.thread.isRunning():
             self.thread.cancel()
             self.thread.wait(3000)  # Wait up to 3 seconds
             if self.thread.isRunning():
